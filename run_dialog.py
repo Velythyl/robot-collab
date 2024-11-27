@@ -13,7 +13,7 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 
 from rocobench.envs import SortOneBlockTask, CabinetTask, MoveRopeTask, SweepTask, MakeSandwichTask, PackGroceryTask, MujocoSimEnv, SimRobot, visualize_voxel_scene
-from rocobench import PlannedPathPolicy, LLMPathPlan, MultiArmRRT
+from rocobench import PlannedPathPolicy, LLMPathPlan, MultiArmRRT, RobotState
 from prompting import LLMResponseParser, FeedbackManager, DialogPrompter, SingleThreadPrompter, save_episode_html
 
 # print out logging.info
@@ -150,6 +150,48 @@ class LLMRunner:
                 llm_source=llm_source,
             )
 
+        def display():
+            """ Display the plan in the open3d viewer """
+            env = deepcopy(self.env)
+            env.physics.data.qpos[:] = self.env.physics.data.qpos[:].copy()
+            env.physics.forward()
+            env.render_point_cloud = True
+            obs = env.get_obs()
+
+            poses = {}
+            for k, v in vars(obs).items():
+                if isinstance(v, RobotState):
+                    poses[f"{k}_pos"] = v.ee_xpos
+                    poses[env.robot_name_map[k]] = v.ee_xpos
+                elif k == "objects":
+                    for objname, objval in v.items():
+                        if objname == "bin":
+                            continue
+
+                        if objname == "table_top":
+                            pos = env.physics.data.site(f"{objname}").xpos
+                            if objname == "table":
+                                pos[-1] += 0.15
+                        else:
+                            pos = env.physics.data.site(f"{objname}_top").xpos
+                            pos[-1] += 0.05
+
+                        poses[objname] = pos
+                elif k == "bin_slot_xposes":
+                    poses.update(v)
+
+            poses = {k.lower(): tuple(list(v)) for k,v in poses.items()}
+            import json
+            with open('./poses.json', 'w') as f:
+                json.dump(poses, f)
+
+            visualize_voxel_scene(
+                obs.scene,
+                path_pts=None,
+            )
+        display()
+        exit()
+
 
     def display_plan(self, plan: LLMPathPlan, save_name = "vis_plan", save_dir = None):
         """ Display the plan in the open3d viewer """ 
@@ -161,6 +203,30 @@ class LLMRunner:
         path_ls = plan.path_3d_list
         if save_dir is not None:
             save_path = os.path.join(save_dir, f"{save_name}.jpg")
+
+        poses = {}
+        for k,v in vars(obs).items():
+            if isinstance(v, RobotState):
+                poses[f"{k}_pos"] = v.ee_xpos
+                poses[env.robot_name_map[k]] = v.ee_xpos
+            elif k == "objects":
+                for objname, objval in v.items():
+                    if objname == "bin_top":
+                        continue
+
+                    pos = env.physics.data.site(f"{objname}_top").xpos
+                    if objname == "table":
+                        pos[-1] += 0.15
+                    else:
+                        pos[-1] += 0.05
+                    poses[objname] = pos
+            elif k == "bin_slot_xposes":
+                poses.update(v)
+
+        import json
+        with open('./poses.json', 'w') as f:
+            json.dump(poses, f)
+
         visualize_voxel_scene(
             obs.scene,
             path_pts=path_ls,
@@ -487,7 +553,7 @@ if __name__ == "__main__":
     parser.add_argument("--split_parsed_plans", "-sp", action="store_true")
     parser.add_argument("--no_history", "-nh", action="store_true")
     parser.add_argument("--no_feedback", "-nf", action="store_true")
-    parser.add_argument("--llm_source", "-llm", type=str, default="gpt-4")
+    parser.add_argument("--llm_source", "-llm", type=str, default="gpt-3.5-turbo")
     logging.basicConfig(level=logging.INFO)
 
     args = parser.parse_args()
