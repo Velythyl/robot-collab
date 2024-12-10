@@ -189,8 +189,8 @@ class LLMRunner:
                 obs.scene,
                 path_pts=None,
             )
-        display()
-        exit()
+        #display()
+        #exit()
 
 
     def display_plan(self, plan: LLMPathPlan, save_name = "vis_plan", save_dir = None):
@@ -553,7 +553,7 @@ if __name__ == "__main__":
     parser.add_argument("--split_parsed_plans", "-sp", action="store_true")
     parser.add_argument("--no_history", "-nh", action="store_true")
     parser.add_argument("--no_feedback", "-nf", action="store_true")
-    parser.add_argument("--llm_source", "-llm", type=str, default="gpt-3.5-turbo")
+    parser.add_argument("--llm_source", "-llm", type=str, default="olmo2-15b")
     logging.basicConfig(level=logging.INFO)
 
     args = parser.parse_args()

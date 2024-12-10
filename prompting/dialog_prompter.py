@@ -75,7 +75,7 @@ class DialogPrompter:
         self.temperature = temperature
         self.llm_source = llm_source
         assert llm_source in ["gpt-4", "gpt-3.5-turbo",
-                              "claude"], f"llm_source must be one of [gpt4, gpt-3.5-turbo, claude], got {llm_source}"
+                              "claude", "olmo2-15b"], f"llm_source invalid, got {llm_source}"
 
     def compose_system_prompt(
             self,
@@ -264,6 +264,11 @@ Your response is:
                 action = input(f"Enter action for {aname}:\n")
                 response += f"NAME {aname} ACTION {action}\n"
             return response, dict()
+
+        if sum([int(x in self.llm_source) for x in ["chat", "claude"]]) == 0:
+            from prompting.llm_wrapper import llm_autocomplete
+            return llm_autocomplete(max_query, self.llm_source, system_prompt, user_prompt, self.max_tokens,
+                                    self.temperature)
 
         for n in range(max_query):
             sleep(1)
