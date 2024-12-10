@@ -143,6 +143,11 @@ def visualize_voxel_scene(
     """ Displays the scene and path points as voxels """
     pcd = obs_pcd.to_open3d()
     voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd, voxel_size)
+
+    o3d.io.write_point_cloud("./pcd.pcd", pcd)
+    if path_pts is None:
+        return
+
     new_voxels = []
     new_colors = []
     if len(path_colors) == 0:
@@ -534,4 +539,5 @@ class VisionSensorOutput:
         image[0, 2] = (self.width - 1) / 2.0
         image[1, 2] = (self.height - 1) / 2.0
         return image @ focal @ rotation @ translation
- 
+
+#if __name__ == "__main__":
