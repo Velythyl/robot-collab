@@ -85,27 +85,104 @@ class DialogPrompter:
             current_chat: List = [],  # chat from current round, this comes AFTER env feedback
             feedback_history: List = []
     ) -> str:
-        action_desp = self.env.get_action_prompt()
-        if self.use_waypoints:
-            action_desp += PATH_PLAN_INSTRUCTION
-        agent_prompt = self.env.get_agent_prompt(obs, agent_name)
+        #action_desp = self.env.get_action_prompt()
+        #if self.use_waypoints:
+        #    action_desp += PATH_PLAN_INSTRUCTION
+        #agent_prompt = self.env.get_agent_prompt(obs, agent_name)
 
-        round_history = self.get_round_history() if self.use_history else ""
+        #round_history = self.get_round_history() if self.use_history else ""
 
-        execute_feedback = ""
-        if len(self.failed_plans) > 0:
-            execute_feedback = "Plans below failed to execute, improve them to avoid collision and smoothly reach the targets:\n"
-            execute_feedback += "\n".join(self.failed_plans) + "\n"
+        #execute_feedback = ""
+        #if len(self.failed_plans) > 0:
+        #    execute_feedback = "Plans below failed to execute, improve them to avoid collision and smoothly reach the targets:\n"
+        #    execute_feedback += "\n".join(self.failed_plans) + "\n"
 
-        chat_history = "[Previous Chat]\n" + "\n".join(chat_history) if len(chat_history) > 0 else ""
+        #chat_history = "[Previous Chat]\n" + "\n".join(chat_history) if len(chat_history) > 0 else ""
 
-        system_prompt = f"{action_desp}\n{round_history}\n{execute_feedback}{agent_prompt}\n{chat_history}\n"
+        #system_prompt = f"{action_desp}\n{round_history}\n{execute_feedback}{agent_prompt}\n{chat_history}\n"
+
+        system_prompt = f"""
+The MAGI Supercomputer is composed of three “council members”, each supercomputers in their own right. 
+The members are CAS, BAL, and MEL. They vote on issues. Two of them must agree on a plan before the MAGI Supercomputer answers. 
+You are tasked with filling in for the three council members, and finally for the MAGI Supercomputer gestalt entity.
+
+[WORLD STATE]
+
+{self.env.get_object_desp(obs)}
+{self.env.get_robots_desp(obs)}
+{self.env.get_table_constraint_desp(obs)}
+
+[ACTION OPTIONS]
+1) NAME <robot> PICK <obj> PATH <path>: only PICK if the gripper is empty;
+2) NAME <robot> PLACE <obj> bin PATH <path>: use only if the gripper already contains the object (PICK), can PLACE it into an empty bin slot. Do not PLACE if another object is already in a slot!
+
+[PATHS]
+<path>: a sequence of <coord>
+<coord>: a tuple (x,y,z) for gripper location
+The <coord>s must be evenly spaced between start and target. 
+Each <coord> must not collide with other robots, and must stay away from table and objects.  
+There must be exactly four <coord> per path.
+
+[EXAMPLES OF ACTION MESSAGE]
+(For example purposes only!)
+NAME Bob ACTION PICK apple PATH [(0.9,0.0,0.5), (0.5, 0, 0.5), (0.2, 0.1, 0.5),(0.35, 0.35, 0.5)]
+
+[CONCENSUS] 
+When at least two (2) of CAS, BAL, and MEL agree on a plan, MAGI must output the following:
+EXECUTE
+<action option for Alice>
+<action option for Bob>
+MAGI always outputs no more, no less than one action for both robots. 
+The council must always discuss actions for both robots.
+
+[COUNCIL MESSAGES]
+The three council members exchange messages.
+They propose the <path>s and then collaboratively refine them as needed.
+The council must select actions and paths such that there are no collisions between the robots. The weight of the object is of no concern.
+Any council session ALWAYS ends with 
+MAGI:
+EXECUTE
+<action option for Alice>
+<action option for Bob>
+
+[ENVIRONMENT FEEDBACK]
+- If IK fails, propose more feasible step for the gripper to reach.
+- If detected collision, move robot so the gripper and the inhand object stay away from the collided objects.
+- If collision is detected at a Goal Step, choose a different action.
+- To make a path more evenly spaced, make distance between pair-wise steps similar.
+- If a plan failed to execute, re-plan to choose more feasible steps in each PATH, or choose different actions.
+
+[CHAT FORMAT]
+[SUBTASK]
+CAS: <message from CAS>
+BAL: <message from BAL>
+…
+[ACTION]
+...
+MEL: <message from MEL>
+BAL: <message from BAL>
+…
+MAGI: EXECUTE
+<action option for Alice>
+<action option for Bob>
+
+---
+
+"""
 
         if self.use_feedback and len(feedback_history) > 0:
             system_prompt += "\n".join(feedback_history)
+        else:
+            system_prompt += "[Environment feedback]\nNone at present"
 
+        system_prompt += """
+
+You can now proceed with the exchange of messages..
+
+[CHAT WINDOW]
+"""
         if len(current_chat) > 0:
-            system_prompt += "[Current Chat]\n" + "\n".join(current_chat) + "\n"
+            system_prompt += "\n".join(current_chat) + "\n"
 
         return system_prompt
 
@@ -183,67 +260,68 @@ This previous response from [{final_agent}] failed to parse!: '{final_response}'
         agent_responses = []
         usages = []
         dialog_done = False
-        num_responses = {agent_name: 0 for agent_name in self.robot_agent_names}
+        num_responses = {"MAGI": 0}
         n_calls = 0
 
         while n_calls < self.max_calls_per_round:
-            for agent_name in self.robot_agent_names:
-                system_prompt = self.compose_system_prompt(
-                    obs,
-                    agent_name,
-                    chat_history=chat_history,
-                    current_chat=agent_responses,
-                    feedback_history=feedback_history,
-                )
+            #for agent_name in self.robot_agent_names:
+            agent_name = "MAGI"
+            system_prompt = self.compose_system_prompt(
+                obs,
+                agent_name,
+                chat_history=chat_history,
+                current_chat=agent_responses,
+                feedback_history=feedback_history,
+            )
 
-                agent_prompt = f"You are {agent_name}, your response is:"
-                if n_calls == self.max_calls_per_round - 1:
-                    agent_prompt = f"""
+            agent_prompt = f"You are {agent_name}, your response is:"
+            if n_calls == self.max_calls_per_round - 1:
+                agent_prompt = f"""
 You are {agent_name}, this is the last call, you must end your response by incoporating all previous discussions and output the best plan via EXECUTE. 
 Your response is:
-                    """
-                response, usage = self.query_once(
-                    system_prompt,
-                    user_prompt=agent_prompt,
-                    max_query=3,
-                )
+                """
+            response, usage = self.query_once(
+                system_prompt,
+                user_prompt=agent_prompt,
+                max_query=3,
+            )
 
-                tosave = [
-                    {
-                        "sender": "SystemPrompt",
-                        "message": system_prompt,
-                    },
-                    {
-                        "sender": "UserPrompt",
-                        "message": agent_prompt,
-                    },
-                    {
-                        "sender": agent_name,
-                        "message": response,
-                    },
-                    usage,
-                ]
-                timestamp = datetime.now().strftime("%m%d-%H%M")
-                fname = f'{save_path}/replan{replan_idx}_call{n_calls}_agent{agent_name}_{timestamp}.json'
-                json.dump(tosave, open(fname, 'w'))
+            tosave = [
+                {
+                    "sender": "SystemPrompt",
+                    "message": system_prompt,
+                },
+                {
+                    "sender": "UserPrompt",
+                    "message": agent_prompt,
+                },
+                {
+                    "sender": agent_name,
+                    "message": response,
+                },
+                usage,
+            ]
+            timestamp = datetime.now().strftime("%m%d-%H%M")
+            fname = f'{save_path}/replan{replan_idx}_call{n_calls}_agent{agent_name}_{timestamp}.json'
+            json.dump(tosave, open(fname, 'w'))
 
-                num_responses[agent_name] += 1
-                # strip all the repeated \n and blank spaces in response:
-                pruned_response = response.strip()
-                # pruned_response = pruned_response.replace("\n", " ")
-                agent_responses.append(
-                    f"[{agent_name}]:\n{pruned_response}"
-                )
-                usages.append(usage)
-                n_calls += 1
-                if 'EXECUTE' in response:
-                    if replan_idx > 0 or all([v > 0 for v in num_responses.values()]):
-                        dialog_done = True
-                        break
-
-                if self.debug_mode:
+            num_responses[agent_name] += 1
+            # strip all the repeated \n and blank spaces in response:
+            pruned_response = response.strip()
+            # pruned_response = pruned_response.replace("\n", " ")
+            agent_responses.append(
+                f"[{agent_name}]:\n{pruned_response}"
+            )
+            usages.append(usage)
+            n_calls += 1
+            if 'EXECUTE' in response:
+                if replan_idx > 0 or all([v > 0 for v in num_responses.values()]):
                     dialog_done = True
                     break
+
+            if self.debug_mode:
+                dialog_done = True
+                break
 
             if dialog_done:
                 break
@@ -264,6 +342,11 @@ Your response is:
                 action = input(f"Enter action for {aname}:\n")
                 response += f"NAME {aname} ACTION {action}\n"
             return response, dict()
+
+#        return """
+#EXECUTE
+#NAME Alice ACTION PICK apple PATH [(0.29, 0.06, 0.51), (0.32, 0.12, 0.51), (0.35, 0.18, 0.51), (0.25, 0.41, 0.36)]
+#NAME Bob ACTION PICK soda_can PATH [(0.35, 1.05, 0.62), (0.40, 1.00, 0.62), (0.45, 0.95, 0.62), (0.65, 0.41, 0.36)]""", {}
 
         if sum([int(x in self.llm_source) for x in ["chat", "claude"]]) == 0:
             from prompting.llm_wrapper import llm_autocomplete

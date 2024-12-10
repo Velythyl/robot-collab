@@ -366,11 +366,30 @@ class PackGroceryTask(MujocoSimEnv):
     
     def describe_task_context(self):
         return PACK_TASK_CONTEXT
-    
+
+    def get_object_desp(self, obs):
+        temp = "\n".join([self.describe_object(obs, name) for name in self.item_names])
+        slot_desp = "\n".join(
+            [
+                f"{slot_name}: ({x:.2f}, {y:.2f}, {z:.2f})" for slot_name, (x, y, z) in self.bin_slot_xposes.items()
+            ]
+        )
+        return f"{temp}\n{slot_desp}"
+
+    def get_table_constraint_desp(self, obs):
+        table_height = self.physics.data.body("table_top").xpos[2] + 0.15
+        return f"The grippers must move higher than these objects and higher than table height {table_height:.2f}, but move lower than 0.8."
+
+    def get_robots_desp(self, obs):
+        alice = self.describe_robot_state(obs, self.get_robot_name("Alice"))
+        bob = self.describe_robot_state(obs, self.get_robot_name("Bob"))
+
+        return f"{alice}\n{bob}"
+
     def get_agent_prompt(self, obs, agent_name):        
         robot_name = self.get_robot_name(agent_name)
         other_robot = "Alice" if agent_name == "Bob" else "Bob"
-        object_desp = "\n".join([self.describe_object(obs, name) for name in self.item_names])
+        object_desp = self.get_object_desp(obs) #"\n".join([self.describe_object(obs, name) for name in self.item_names])
 
         table_height = self.physics.data.body("table_top").xpos[2] + 0.15 
         robot_desp = self.describe_robot_state(obs, robot_name).replace(f"{agent_name}'s", "Your")

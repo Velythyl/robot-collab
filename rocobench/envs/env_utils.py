@@ -11,6 +11,8 @@ import open3d as o3d
 from matplotlib.patches import Patch
 from PIL import Image 
 import seaborn as sns
+
+
 Pixel = Tuple[int, int]
 Point3D = Tuple[float, float, float]
 
