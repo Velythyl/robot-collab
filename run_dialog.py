@@ -204,6 +204,7 @@ class LLMRunner:
         if save_dir is not None:
             save_path = os.path.join(save_dir, f"{save_name}.jpg")
 
+        """
         poses = {}
         for k,v in vars(obs).items():
             if isinstance(v, RobotState):
@@ -211,7 +212,7 @@ class LLMRunner:
                 poses[env.robot_name_map[k]] = v.ee_xpos
             elif k == "objects":
                 for objname, objval in v.items():
-                    if objname == "bin_top":
+                    if objname == "bin_top" or "bin":
                         continue
 
                     pos = env.physics.data.site(f"{objname}_top").xpos
@@ -226,6 +227,7 @@ class LLMRunner:
         import json
         with open('./poses.json', 'w') as f:
             json.dump(poses, f)
+        """
 
         visualize_voxel_scene(
             obs.scene,

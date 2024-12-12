@@ -14,6 +14,7 @@ from rocobench.rrt_multi_arm import MultiArmRRT
 from rocobench.envs import MujocoSimEnv, EnvState
 from .feedback import FeedbackManager
 from .parser import LLMResponseParser
+from .roi_to_path import execute_completion
 
 assert os.path.exists("openai_key.json"), "Please put your OpenAI API key in a string in robot-collab/openai_key.json"
 OPENAI_KEY = str(json.load(open("openai_key.json")))
@@ -65,6 +66,7 @@ class DialogPrompter:
         self.robot_name_map = robot_name_map
         self.robot_agent_names = list(robot_name_map.values())
         self.num_replans = num_replans
+        #env.render_point_cloud = True
         self.env = env
         self.feedback_manager = feedback_manager
         self.parser = parser
@@ -102,69 +104,49 @@ class DialogPrompter:
         #system_prompt = f"{action_desp}\n{round_history}\n{execute_feedback}{agent_prompt}\n{chat_history}\n"
 
         system_prompt = f"""
-The MAGI Supercomputer is composed of three “council members”, each supercomputers in their own right. 
-The members are CAS, BAL, and MEL. They vote on issues. Two of them must agree on a plan before the MAGI Supercomputer answers. 
-You are tasked with filling in for the three council members, and finally for the MAGI Supercomputer gestalt entity.
+[TASK]
+Two robot arms, Alice and Bob, stand on different sides of a table, and together must put all the grocery items into a bin. They must avoid collisions, both robot-robot and robot-object.
 
 [WORLD STATE]
-
 {self.env.get_object_desp(obs)}
 {self.env.get_robots_desp(obs)}
 {self.env.get_table_constraint_desp(obs)}
 
-[ACTION OPTIONS]
-1) NAME <robot> PICK <obj> PATH <path>: only PICK if the gripper is empty;
-2) NAME <robot> PLACE <obj> bin PATH <path>: use only if the gripper already contains the object (PICK), can PLACE it into an empty bin slot. Do not PLACE if another object is already in a slot!
+[ACTION]
+1) PICK <obj>
+2) PLACE <obj> <bin slot>
+Obviously, cannot PLACE objects that are not held by the gripper. Need to PICK first.
 
-[PATHS]
-<path>: a sequence of <coord>
-<coord>: a tuple (x,y,z) for gripper location
-The <coord>s must be evenly spaced between start and target. 
-Each <coord> must not collide with other robots, and must stay away from table and objects.  
-There must be exactly four <coord> per path.
+[DISCUSSION]
+The robots use their supercomputers to discuss the task and what actions they want to take. 
+First, they clearly state “I am Alice” or “I am Bob”. 
+Second, they read the [CHAT WINDOW] and give feedback to the other robot, if need be. For example, if Alice picked an object that is too close to Bob's best choice, Bob might tell Alice to pick a different object.
+Third, they state what their action will be. 
+They can only choose one action each. Once they are both confident in what they want to do, the OVERSEER will take over and output an EXECUTE message. 
+The OVERSEER only intervenes when both Alice and Bob have had a chance to speak. All robots must select an action. They cannot target the same object.
 
-[EXAMPLES OF ACTION MESSAGE]
-(For example purposes only!)
-NAME Bob ACTION PICK apple PATH [(0.9,0.0,0.5), (0.5, 0, 0.5), (0.2, 0.1, 0.5),(0.35, 0.35, 0.5)]
-
-[CONCENSUS] 
-When at least two (2) of CAS, BAL, and MEL agree on a plan, MAGI must output the following:
+[EXECUTE]
 EXECUTE
-<action option for Alice>
-<action option for Bob>
-MAGI always outputs no more, no less than one action for both robots. 
-The council must always discuss actions for both robots.
-
-[COUNCIL MESSAGES]
-The three council members exchange messages.
-They propose the <path>s and then collaboratively refine them as needed.
-The council must select actions and paths such that there are no collisions between the robots. The weight of the object is of no concern.
-Any council session ALWAYS ends with 
-MAGI:
+NAME Alice ACTION <ACTION>
+NAME Bob ACTION <ACTION>
+Example:
 EXECUTE
-<action option for Alice>
-<action option for Bob>
-
-[ENVIRONMENT FEEDBACK]
-- If IK fails, propose more feasible step for the gripper to reach.
-- If detected collision, move robot so the gripper and the inhand object stay away from the collided objects.
-- If collision is detected at a Goal Step, choose a different action.
-- To make a path more evenly spaced, make distance between pair-wise steps similar.
-- If a plan failed to execute, re-plan to choose more feasible steps in each PATH, or choose different actions.
+NAME Alice ACTION PICK controller 
+NAME Bob ACTION PICK dog
 
 [CHAT FORMAT]
-[SUBTASK]
-CAS: <message from CAS>
-BAL: <message from BAL>
-…
-[ACTION]
+Alice: I am Alice. I will ...
+Bob: I am Bob. No, you should ... Because ...
 ...
-MEL: <message from MEL>
-BAL: <message from BAL>
-…
-MAGI: EXECUTE
-<action option for Alice>
-<action option for Bob>
+OVERSEER:
+EXECUTE
+NAME Alice ACTION <ACTION 1 OR 2>
+NAME Bob ACTION <ACTION 1 OR 2>
+
+Remember, you can only generate ONE message, either Alice, Bob, or OVERSEER. Stop generating as soon as you output a message.
+Remember that the OVERSEER is able to take over and send the EXECUTE message once both Alice and Bob have decided what they want to do.
+Remember, the OVERSEER is hyper intelligent and always intervenes when both Bob and Alice agree on a plan.
+The OVERSEER does not intervene prematurely. It makes sure that both Bob and Alice have chosen an ACTION.
 
 ---
 
@@ -177,12 +159,12 @@ MAGI: EXECUTE
 
         system_prompt += """
 
-You can now proceed with the exchange of messages..
-
 [CHAT WINDOW]
 """
         if len(current_chat) > 0:
             system_prompt += "\n".join(current_chat) + "\n"
+
+        system_prompt += f"\nWaiting for {agent_name}'s message..."
 
         return system_prompt
 
@@ -207,6 +189,9 @@ You can now proceed with the exchange of messages..
                 save_path=save_path,
             )
             chat_history += agent_responses
+
+            final_response = execute_completion(final_response, self.env, obs)
+
             parse_succ, parsed_str, llm_plans = self.parser.parse(obs, final_response)
 
             curr_feedback = "None"
@@ -260,74 +245,76 @@ This previous response from [{final_agent}] failed to parse!: '{final_response}'
         agent_responses = []
         usages = []
         dialog_done = False
-        num_responses = {"MAGI": 0}
+        num_responses = {agent: 0 for agent in self.robot_agent_names}
         n_calls = 0
 
         while n_calls < self.max_calls_per_round:
-            #for agent_name in self.robot_agent_names:
-            agent_name = "MAGI"
-            system_prompt = self.compose_system_prompt(
-                obs,
-                agent_name,
-                chat_history=chat_history,
-                current_chat=agent_responses,
-                feedback_history=feedback_history,
-            )
+            for agent_name in self.robot_agent_names:
+                system_prompt = self.compose_system_prompt(
+                    obs,
+                    agent_name,
+                    chat_history=chat_history,
+                    current_chat=agent_responses,
+                    feedback_history=feedback_history,
+                )
 
-            agent_prompt = f"You are {agent_name}, your response is:"
-            if n_calls == self.max_calls_per_round - 1:
-                agent_prompt = f"""
-You are {agent_name}, this is the last call, you must end your response by incoporating all previous discussions and output the best plan via EXECUTE. 
-Your response is:
-                """
-            response, usage = self.query_once(
-                system_prompt,
-                user_prompt=agent_prompt,
-                max_query=3,
-            )
+                agent_prompt = f"You are {agent_name}, your response is:"
+                if n_calls == self.max_calls_per_round - 1:
+                    agent_prompt = f"""
+    You are {agent_name}, this is the last call, you must end your response by incoporating all previous discussions and output the best plan via EXECUTE. 
+    Your response is:
+                    """
+                response, usage = self.query_once(
+                    system_prompt,
+                    user_prompt=agent_prompt,
+                    max_query=3,
+                )
 
-            tosave = [
-                {
-                    "sender": "SystemPrompt",
-                    "message": system_prompt,
-                },
-                {
-                    "sender": "UserPrompt",
-                    "message": agent_prompt,
-                },
-                {
-                    "sender": agent_name,
-                    "message": response,
-                },
-                usage,
-            ]
-            timestamp = datetime.now().strftime("%m%d-%H%M")
-            fname = f'{save_path}/replan{replan_idx}_call{n_calls}_agent{agent_name}_{timestamp}.json'
-            json.dump(tosave, open(fname, 'w'))
+                tosave = [
+                    {
+                        "sender": "SystemPrompt",
+                        "message": system_prompt,
+                    },
+                    {
+                        "sender": "UserPrompt",
+                        "message": agent_prompt,
+                    },
+                    {
+                        "sender": agent_name,
+                        "message": response,
+                    },
+                    usage,
+                ]
+                timestamp = datetime.now().strftime("%m%d-%H%M")
+                fname = f'{save_path}/replan{replan_idx}_call{n_calls}_agent{agent_name}_{timestamp}.json'
+                json.dump(tosave, open(fname, 'w'))
 
-            num_responses[agent_name] += 1
-            # strip all the repeated \n and blank spaces in response:
-            pruned_response = response.strip()
-            # pruned_response = pruned_response.replace("\n", " ")
-            agent_responses.append(
-                f"[{agent_name}]:\n{pruned_response}"
-            )
-            usages.append(usage)
-            n_calls += 1
-            if 'EXECUTE' in response:
-                if replan_idx > 0 or all([v > 0 for v in num_responses.values()]):
+                num_responses[agent_name] += 1
+                # strip all the repeated \n and blank spaces in response:
+                pruned_response = response.strip()
+                # pruned_response = pruned_response.replace("\n", " ")
+                agent_responses.append(
+                    f"[{agent_name}]:\n{pruned_response}"
+                )
+                usages.append(usage)
+                n_calls += 1
+                if 'EXECUTE' in response:
+                    if replan_idx > 0 or all([v > 0 for v in num_responses.values()]):
+                        dialog_done = True
+                        break
+
+                if self.debug_mode:
                     dialog_done = True
                     break
-
-            if self.debug_mode:
-                dialog_done = True
-                break
 
             if dialog_done:
                 break
 
         # response = "\n".join(response.split("EXECUTE")[1:])
         # print(response)
+
+
+
         return agent_name, response, agent_responses
 
     def query_once(self, system_prompt, user_prompt, max_query):

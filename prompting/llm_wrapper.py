@@ -36,17 +36,11 @@ def _query_barebonesllmchat(model, system_prompt, user_prompt, max_tokens, tempe
     from barebonesllmchat.common.chat_history import ChatHistory, CHAT_ROLE
     #system_prompt = f"{system_prompt}"
 
-    PREFIX = """[Overview]
+    PREFIX = """
     You are an agent that is part of a robot task. The two robots must collaborate and communicate with each other.
     Below, you will find a list of rules for the interactions. Please follow those rules very closely.
-    You'll notice that EXECUTE indicates a final plan. You can only output EXECUTE if you have preliminary plans for both robots.
-    When you opt to EXECUTE, you must copy-paste the two plants in the following format:
-    
-    EXECUTE
-    NAME <name> ACTION <action> <object> PATH <list of coords>
-    NAME <name> ACTION <action> <object> PATH <list of coords>
-    
-    Notice that there is a plan for both robots.
+    You'll notice the OVERSEER can output EXECUTE. Don't forget to make the OVERSEER intervene instead of generating messages as normal.
+    Also, you can only generate a message for ONE entity, be it a robot or the OVERSEER.
     """
     #MIDFIX = """\n[Overview]
     #You are an agent that is part of a robot task. The two robots must collaborate and communicate with each other.
@@ -55,11 +49,13 @@ def _query_barebonesllmchat(model, system_prompt, user_prompt, max_tokens, tempe
     #Also, make sure you PICK an object before PLACEing it.
     #Again, do not output EXECUTE if you do not have plans for both robots. EXECUTE should also include plans for both robots.
     #\n\n"""
-    history = ChatHistory().add( CHAT_ROLE.SYSTEM, PREFIX +"\n"+system_prompt).add(CHAT_ROLE.USER, user_prompt)#.add(CHAT_ROLE.SYSTEM, system_prompt).add(CHAT_ROLE.USER, user_prompt)
+    history = ChatHistory().add(CHAT_ROLE.SYSTEM, PREFIX).add( CHAT_ROLE.USER, system_prompt) #.add(CHAT_ROLE.USER, user_prompt)#.add(CHAT_ROLE.SYSTEM, system_prompt).add(CHAT_ROLE.USER, user_prompt)
     chat_id = barebonesllmchat_CLIENT.send_history(None, history, blocking=True,
                                                    generation_settings={"max_new_tokens": max_tokens}
                                                    )
     response = barebonesllmchat_CLIENT.get_chat_messages(chat_id)[-1]["content"]
+
+    #response = response.split("\n\n")[0]    # removes extra responses that the LLM sometimes outputs
 
     # attempt to rescue response, sometimes OLMO forgets to say "NAME Alice"
     #for name in ["Alice", "Bob", "Chad", "David"]:
